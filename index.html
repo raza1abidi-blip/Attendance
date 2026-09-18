@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Checkpoint — Attendance</title>
+
+<!-- Firebase (free database, used to sync data across all devices) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+
+<!-- Face recognition (runs fully on-device, nothing uploaded) -->
+<script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+
+<style>
+  :root{
+    --ink:#14181F; --paper:#F2EFEA; --amber:#E8A33D; --forest:#2F6B4F;
+    --rust:#B5432B; --slate:#5A6B7A; --line: rgba(242,239,234,0.14);
+  }
+  *{box-sizing:border-box;}
+  body{ margin:0; background:var(--ink); color:var(--paper); font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; min-height:100vh; }
+  #app{ max-width:520px; margin:0 auto; padding:0 0 60px; }
+  header.gate{ padding:28px 20px 20px; border-bottom:1px solid var(--line); }
+  header.gate h1{ margin:0 0 4px; font-size:26px; font-weight:600; letter-spacing:-0.01em; }
+  header.gate p{ margin:0; color:var(--slate); font-size:14px; }
+  nav.tabs{ display:flex; border-bottom:1px solid var(--line); }
+  nav.tabs button{ flex:1; background:none; border:none; color:var(--slate); font-family:inherit; font-size:14px; padding:14px 8px; cursor:pointer; border-bottom:2px solid transparent; transition:color .15s, border-color .15s; }
+  nav.tabs button.active{ color:var(--paper); border-bottom-color:var(--amber); }
+  section{ padding:24px 20px; display:none; }
+  section.active{ display:block; }
+  .card{ background:rgba(242,239,234,0.04); border:1px solid var(--line); border-radius:4px; padding:20px; margin-bottom:16px; }
+  .readout{ display:flex; justify-content:space-between; align-items:baseline; padding:10px 0; border-bottom:1px solid var(--line); font-size:14px; }
+  .readout:last-child{ border-bottom:none; }
+  .readout .label{ color:var(--slate); }
+  .readout .value{ font-family:'IBM Plex Mono', ui-monospace, monospace; }
+  .status-pill{ display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:20px; font-size:12px; font-family:'IBM Plex Mono', ui-monospace, monospace; }
+  .status-pill.wait{ background:rgba(90,107,122,0.2); color:var(--slate); }
+  .status-pill.ok{ background:rgba(47,107,79,0.25); color:#7fcba0; }
+  .status-pill.bad{ background:rgba(181,67,43,0.25); color:#e8846a; }
+  .status-pill .dot{ width:6px; height:6px; border-radius:50%; background:currentColor; }
+  select{ width:100%; background:rgba(242,239,234,0.06); border:1px solid var(--line); border-radius:4px; padding:10px 12px; color:var(--paper); font-family:inherit; font-size:14px; margin-bottom:14px; }
+  .viewfinder{ position:relative; width:100%; aspect-ratio:1/1; border-radius:6px; overflow:hidden; background:#000; border:1px solid var(--line); margin-bottom:16px; }
+  .viewfinder video, .viewfinder canvas{ position:absolute; top:0; left:0; width:100%; height:100%; object-fit:cover; }
+  .viewfinder .frame{ position:absolute; inset:0; border:2px solid rgba(232,163,61,0.5); border-radius:6px; pointer-events:none; }
+  .viewfinder .placeholder{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:var(--slate); font-size:13px; text-align:center; padding:20px; }
+  .viewfinder.small{ aspect-ratio:4/3; }
+  button.primary{ width:100%; background:var(--amber); color:var(--ink); border:none; border-radius:4px; padding:14px; font-family:inherit; font-weight:600; font-size:15px; cursor:pointer; }
+  button.primary:disabled{ background:rgba(90,107,122,0.3); color:var(--slate); cursor:not-allowed; }
+  button.secondary{ width:100%; background:transparent; color:var(--paper); border:1px solid var(--line); border-radius:4px; padding:12px; font-family:inherit; font-size:14px; cursor:pointer; margin-top:8px; }
+  button.danger{ background:transparent; color:var(--rust); border:1px solid rgba(181,67,43,0.4); border-radius:4px; padding:8px 12px; font-family:inherit; font-size:12px; cursor:pointer; }
+  .result-msg{ margin-top:14px; padding:12px 14px; border-radius:4px; font-size:14px; display:none; }
+  .result-msg.show{ display:block; }
+  .result-msg.ok{ background:rgba(47,107,79,0.2); border:1px solid rgba(47,107,79,0.4); }
+  .result-msg.bad{ background:rgba(181,67,43,0.2); border:1px solid rgba(181,67,43,0.4); }
+  label{ display:block; font-size:13px; color:var(--slate); margin-bottom:6px; }
+  input[type=text], input[type=number]{ width:100%; background:rgba(242,239,234,0.06); border:1px solid var(--line); border-radius:4px; padding:10px 12px; color:var(--paper); font-family:inherit; font-size:14px; margin-bottom:14px; }
+  input:focus, select:focus{ outline:1px solid var(--amber); }
+  h2.section-title{ font-size:15px; font-weight:600; margin:0 0 14px; color:var(--paper); }
+  .emp-row{ display:flex; align-items:center; justify-content:space-between; padding:10px 0; border-bottom:1px solid var(--line); font-size:14px; }
+  .emp-row:last-child{ border-bottom:none; }
+  .emp-row .emp-info{ display:flex; align-items:center; gap:10px; }
+  .emp-row img{ width:32px; height:32px; border-radius:50%; object-fit:cover; border:1px solid var(--line); }
+  table.log{ width:100%; border-collapse:collapse; font-size:12.5px; }
+  table.log th{ text-align:left; color:var(--slate); font-weight:500; padding:6px 4px; border-bottom:1px solid var(--line); }
+  table.log td{ padding:8px 4px; border-bottom:1px solid var(--line); font-family:'IBM Plex Mono', ui-monospace, monospace; }
+  .tag-in{ color:#7fcba0; }
+  .tag-out{ color:#e8846a; }
+  .empty{ color:var(--slate); font-size:13px; text-align:center; padding:20px 0; }
+  .loading-overlay{ position:fixed; inset:0; background:var(--ink); display:flex; align-items:center; justify-content:center; flex-direction:column; gap:12px; z-index:50; padding:30px; text-align:center; }
+  .loading-overlay .spinner{ width:24px; height:24px; border-radius:50%; border:2px solid var(--line); border-top-color:var(--amber); animation:spin 0.8s linear infinite; }
+  @keyframes spin{ to{ transform:rotate(360deg); } }
+  .loading-overlay p{ color:var(--slate); font-size:13px; }
+  .hint{ font-size:12px; color:var(--slate); margin-top:8px; line-height:1.5; }
+  .pin-gate{ display:flex; flex-direction:column; align-items:center; justify-content:center; padding:60px 20px; text-align:center; }
+  .pin-gate p{ color:var(--slate); font-size:14px; margin:0 0 18px; }
+  .pin-gate input{ width:220px; text-align:center; letter-spacing:1px; font-size:16px; font-family:'IBM Plex Mono', ui-monospace, monospace; }
+  .pin-gate button{ width:220px; }
+  .pin-error{ color:var(--rust); font-size:13px; margin-top:10px; min-height:16px; }
+  .setup-box{ max-width:480px; margin:60px auto; padding:24px; background:rgba(242,239,234,0.04); border:1px solid var(--line); border-radius:6px; }
+  .setup-box h2{ margin-top:0; }
+  .setup-box code{ background:rgba(0,0,0,0.4); padding:2px 6px; border-radius:3px; font-size:12.5px; }
+  .setup-box a{ color:var(--amber); }
+</style>
+</head>
+<body>
+
+<!-- ============================================================
+  SETUP REQUIRED: paste your Firebase config below.
+  Get this from: Firebase Console → Project settings → Your apps → Web app → SDK setup and configuration
+============================================================= -->
+<script>
+  const firebaseConfig = {
+    apiKey: "AIzaSyC5N39UmVZr01EQvRY1xrnRt0noRO_RBY8",
+    authDomain: "akberpurfirm.firebaseapp.com",
+    databaseURL: "https://akberpurfirm-default-rtdb.firebaseio.com",
+    projectId: "akberpurfirm",
+    storageBucket: "akberpurfirm.firebasestorage.app",
+    messagingSenderId: "886795468226",
+    appId: "1:886795468226:web:3476bfccb44b2b615faa5b"
+  };
+</script>
+
+<div id="setup-warning" style="display:none;">
+  <div class="setup-box">
+    <h2>⚠️ One-time setup needed</h2>
+    <p>This app needs a free Firebase database to store employees and attendance across devices. Open this file, find the <code>firebaseConfig</code> block near the top, and paste in your own project's values (from Firebase Console → Project settings → Your apps).</p>
+    <p style="color:var(--slate); font-size:13px;">Once that's filled in, reload this page.</p>
+  </div>
+</div>
+
+<div id="loading" class="loading-overlay">
+  <div class="spinner"></div>
+  <p id="loading-text">Loading face recognition models…</p>
+</div>
+
+<div id="app" style="display:none;">
+  <header class="gate">
+    <h1>Checkpoint</h1>
+    <p>Location + face verified attendance</p>
+  </header>
+
+  <nav class="tabs">
+    <button data-tab="employee" class="active">Check In / Out</button>
+    <button data-tab="admin">Admin</button>
+  </nav>
+
+  <!-- EMPLOYEE TAB -->
+  <section id="tab-employee" class="active">
+    <div class="card">
+      <h2 class="section-title">Location</h2>
+      <div class="readout">
+        <span class="label">Distance from office</span>
+        <span class="value" id="distance-val">—</span>
+      </div>
+      <div class="readout">
+        <span class="label">Status</span>
+        <span id="geo-status" class="status-pill wait"><span class="dot"></span>checking…</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 class="section-title">Face verification</h2>
+      <div class="viewfinder" id="viewfinder">
+        <video id="video" autoplay playsinline muted></video>
+        <div class="frame"></div>
+        <div class="placeholder" id="cam-placeholder">Camera will start once you're inside the office radius</div>
+      </div>
+      <button class="primary" id="capture-btn" disabled>Mark attendance</button>
+      <div class="result-msg" id="result-msg"></div>
+      <p class="hint">Your face is matched on this device only — no photo leaves your phone during verification.</p>
+    </div>
+  </section>
+
+  <!-- ADMIN TAB -->
+  <section id="tab-admin">
+    <div class="pin-gate" id="pin-gate">
+      <p>Enter admin PIN to manage office setup, employees and logs</p>
+      <input type="text" id="pin-input" maxlength="30" placeholder="Enter password">
+      <button class="primary" id="pin-submit" style="margin-top:10px;">Unlock</button>
+      <div class="pin-error" id="pin-error"></div>
+    </div>
+
+    <div id="admin-content" style="display:none;">
+      <div class="card">
+        <h2 class="section-title">Office location & radius</h2>
+        <div class="readout">
+          <span class="label">Office coordinates</span>
+          <span class="value" id="office-coords-val">not set</span>
+        </div>
+        <label for="radius-input" style="margin-top:12px;">Allowed radius (metres)</label>
+        <input type="number" id="radius-input" value="200" min="20" max="5000">
+        <button class="secondary" id="set-office-btn">Set office to my current location</button>
+        <p class="hint">Stand at the office and tap this once. Employees will only be allowed to check in from within this radius.</p>
+      </div>
+
+      <div class="card">
+        <h2 class="section-title">Add employee</h2>
+        <label for="emp-name-input">Employee name</label>
+        <input type="text" id="emp-name-input" placeholder="e.g. Ramesh Kumar">
+        <div class="viewfinder small" id="enroll-viewfinder">
+          <video id="enroll-video" autoplay playsinline muted></video>
+          <canvas id="enroll-overlay"></canvas>
+          <div class="frame"></div>
+          <div class="placeholder" id="enroll-placeholder">Tap "Start camera" to enroll a face</div>
+        </div>
+        <button class="secondary" id="enroll-cam-btn">Start camera</button>
+        <button class="primary" id="enroll-capture-btn" style="margin-top:8px;" disabled>Capture face & save employee</button>
+        <div class="result-msg" id="enroll-result"></div>
+      </div>
+
+      <div class="card">
+        <h2 class="section-title">Employees</h2>
+        <div id="employee-list"><p class="empty">No employees added yet.</p></div>
+      </div>
+
+      <div class="card">
+        <h2 class="section-title">Attendance log</h2>
+        <button class="secondary" id="export-btn" style="margin:0 0 14px;">Download attendance (Excel/CSV)</button>
+        <div id="log-table-wrap"><p class="empty">No attendance recorded yet.</p></div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script>
+(function(){
+  const ADMIN_PIN = 'cgda@8344893';
+  const MATCH_THRESHOLD = 0.55;
+  const MODEL_URL = 'https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@master/weights';
+
+  const $ = (sel) => document.querySelector(sel);
+  const $$ = (sel) => document.querySelectorAll(sel);
+
+  // ---------- Firebase check + init ----------
+  if(!firebaseConfig.apiKey || firebaseConfig.apiKey === 'YOUR_API_KEY'){
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('setup-warning').style.display = 'block';
+    return;
+  }
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.database();
+
+  let officeConfig = null;
+  let employees = [];      // [{id, name, photo, descriptor:[...]}]
+  let attendanceLog = [];
+  let currentPos = null;
+  let withinRadius = false;
+
+  // ---------- tabs ----------
+  let adminUnlocked = false;
+  $$('.tabs button').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      $$('.tabs button').forEach(b=>b.classList.remove('active'));
+      $$('section').forEach(s=>s.classList.remove('active'));
+      btn.classList.add('active');
+      $('#tab-'+btn.dataset.tab).classList.add('active');
+      if(btn.dataset.tab === 'admin'){
+        $('#pin-gate').style.display = adminUnlocked ? 'none' : 'flex';
+        $('#admin-content').style.display = adminUnlocked ? 'block' : 'none';
+        if(!adminUnlocked){ $('#pin-input').value=''; $('#pin-error').textContent=''; $('#pin-input').focus(); }
+      }
+    });
+  });
+  function tryUnlock(){
+    if($('#pin-input').value.trim() === ADMIN_PIN){
+      adminUnlocked = true;
+      $('#pin-gate').style.display = 'none';
+      $('#admin-content').style.display = 'block';
+    } else {
+      $('#pin-error').textContent = 'Incorrect PIN. Try again.';
+      $('#pin-input').value = '';
+      $('#pin-input').focus();
+    }
+  }
+  $('#pin-submit').addEventListener('click', tryUnlock);
+  $('#pin-input').addEventListener('keydown', e=>{ if(e.key === 'Enter') tryUnlock(); });
+
+  // ---------- distance ----------
+  function haversine(lat1, lon1, lat2, lon2){
+    const R = 6371000;
+    const toRad = d => d * Math.PI / 180;
+    const dLat = toRad(lat2-lat1);
+    const dLon = toRad(lon2-lon1);
+    const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  }
+
+  function startGeoWatch(){
+    if(!navigator.geolocation){
+      $('#geo-status').className = 'status-pill bad';
+      $('#geo-status').innerHTML = '<span class="dot"></span>no GPS';
+      return;
+    }
+    navigator.geolocation.watchPosition(pos=>{
+      currentPos = pos.coords;
+      evaluateDistance();
+    }, err=>{
+      $('#geo-status').className = 'status-pill bad';
+      $('#geo-status').innerHTML = '<span class="dot"></span>location blocked';
+      $('#distance-val').textContent = '—';
+    }, { enableHighAccuracy:true, maximumAge:5000, timeout:15000 });
+  }
+
+  function evaluateDistance(){
+    if(!officeConfig || !officeConfig.lat){
+      $('#geo-status').className = 'status-pill bad';
+      $('#geo-status').innerHTML = '<span class="dot"></span>office not set up';
+      return;
+    }
+    if(!currentPos) return;
+    const d = haversine(currentPos.latitude, currentPos.longitude, officeConfig.lat, officeConfig.lng);
+    $('#distance-val').textContent = Math.round(d) + ' m';
+    withinRadius = d <= officeConfig.radius;
+    if(withinRadius){
+      $('#geo-status').className = 'status-pill ok';
+      $('#geo-status').innerHTML = '<span class="dot"></span>inside office radius';
+      startEmployeeCamera();
+    } else {
+      $('#geo-status').className = 'status-pill bad';
+      $('#geo-status').innerHTML = '<span class="dot"></span>outside radius';
+      stopEmployeeCamera();
+    }
+  }
+
+  // ---------- employee camera ----------
+  let empStream = null;
+  async function startEmployeeCamera(){
+    if(empStream) return;
+    try{
+      empStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode:'user' } });
+      $('#video').srcObject = empStream;
+      $('#cam-placeholder').style.display = 'none';
+      $('#capture-btn').disabled = false;
+    }catch(e){
+      $('#cam-placeholder').textContent = 'Camera permission denied';
+      $('#cam-placeholder').style.display = 'flex';
+    }
+  }
+  function stopEmployeeCamera(){
+    if(empStream){ empStream.getTracks().forEach(t=>t.stop()); empStream = null; }
+    $('#video').srcObject = null;
+    $('#cam-placeholder').style.display = 'flex';
+    $('#cam-placeholder').textContent = "Camera will start once you're inside the office radius";
+    $('#capture-btn').disabled = true;
+  }
+
+  $('#capture-btn').addEventListener('click', async ()=>{
+    const resultEl = $('#result-msg');
+    resultEl.className = 'result-msg show';
+    resultEl.textContent = 'Verifying face…';
+    $('#capture-btn').disabled = true;
+
+    const detection = await faceapi.detectSingleFace($('#video'), new faceapi.TinyFaceDetectorOptions())
+      .withFaceLandmarks().withFaceDescriptor();
+
+    if(!detection){
+      resultEl.className = 'result-msg show bad';
+      resultEl.textContent = 'No face detected. Face the camera clearly and try again.';
+      $('#capture-btn').disabled = false;
+      return;
+    }
+    if(employees.length === 0){
+      resultEl.className = 'result-msg show bad';
+      resultEl.textContent = 'No employees enrolled yet. Ask admin to add employees first.';
+      $('#capture-btn').disabled = false;
+      return;
+    }
+
+    let best = null, bestDist = Infinity;
+    for(const emp of employees){
+      const dist = faceapi.euclideanDistance(detection.descriptor, emp.descriptor);
+      if(dist < bestDist){ bestDist = dist; best = emp; }
+    }
+
+    if(best && bestDist < MATCH_THRESHOLD){
+      const lastEntry = [...attendanceLog].reverse().find(l => l.employeeId === best.id);
+      const nextType = (lastEntry && lastEntry.type === 'IN') ? 'OUT' : 'IN';
+      const entry = {
+        employeeId: best.id,
+        employeeName: best.name,
+        type: nextType,
+        ts: Date.now(),
+        lat: currentPos.latitude,
+        lng: currentPos.longitude,
+        distance: Math.round(haversine(currentPos.latitude, currentPos.longitude, officeConfig.lat, officeConfig.lng))
+      };
+      await db.ref('attendanceLog').push(entry);
+      resultEl.className = 'result-msg show ok';
+      resultEl.textContent = `Verified: ${best.name} — marked ${nextType} at ${formatTime(entry.ts)}`;
+    } else {
+      resultEl.className = 'result-msg show bad';
+      resultEl.textContent = 'Face not recognised. If this is a mistake, ask admin to re-enroll your face.';
+    }
+    $('#capture-btn').disabled = false;
+  });
+
+  function formatTime(ts){
+    return new Date(ts).toLocaleString('en-IN', { hour:'2-digit', minute:'2-digit', day:'2-digit', month:'short', hour12:true });
+  }
+
+  // ---------- admin: office setup ----------
+  $('#set-office-btn').addEventListener('click', ()=>{
+    if(!navigator.geolocation) return;
+    $('#set-office-btn').textContent = 'Getting location…';
+    navigator.geolocation.getCurrentPosition(async pos=>{
+      const radius = parseInt($('#radius-input').value, 10) || 200;
+      const cfg = { lat: pos.coords.latitude, lng: pos.coords.longitude, radius };
+      await db.ref('officeConfig').set(cfg);
+      $('#set-office-btn').textContent = 'Set office to my current location';
+    }, ()=>{
+      $('#set-office-btn').textContent = 'Location permission denied — retry';
+    }, { enableHighAccuracy:true });
+  });
+
+  $('#radius-input').addEventListener('change', async ()=>{
+    if(!officeConfig) return;
+    const radius = parseInt($('#radius-input').value, 10) || 200;
+    await db.ref('officeConfig/radius').set(radius);
+  });
+
+  function renderOfficeConfig(){
+    if(officeConfig && officeConfig.lat){
+      $('#office-coords-val').textContent = officeConfig.lat.toFixed(5) + ', ' + officeConfig.lng.toFixed(5) + ' (±' + officeConfig.radius + 'm)';
+      $('#radius-input').value = officeConfig.radius;
+    } else {
+      $('#office-coords-val').textContent = 'not set';
+    }
+  }
+
+  // ---------- admin: enroll employee ----------
+  let enrollStream = null;
+  $('#enroll-cam-btn').addEventListener('click', async ()=>{
+    if(enrollStream) return;
+    try{
+      enrollStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode:'user' } });
+      $('#enroll-video').srcObject = enrollStream;
+      $('#enroll-placeholder').style.display = 'none';
+      $('#enroll-capture-btn').disabled = false;
+      $('#enroll-cam-btn').textContent = 'Camera active';
+    }catch(e){
+      $('#enroll-placeholder').textContent = 'Camera permission denied';
+    }
+  });
+
+  $('#enroll-capture-btn').addEventListener('click', async ()=>{
+    const name = $('#emp-name-input').value.trim();
+    const resultEl = $('#enroll-result');
+    if(!name){
+      resultEl.className = 'result-msg show bad';
+      resultEl.textContent = 'Enter the employee name first.';
+      return;
+    }
+    resultEl.className = 'result-msg show';
+    resultEl.textContent = 'Reading face…';
+
+    const detection = await faceapi.detectSingleFace($('#enroll-video'), new faceapi.TinyFaceDetectorOptions())
+      .withFaceLandmarks().withFaceDescriptor();
+
+    if(!detection){
+      resultEl.className = 'result-msg show bad';
+      resultEl.textContent = 'No face detected. Ask them to face the camera and try again.';
+      return;
+    }
+
+    const canvas = document.createElement('canvas');
+    const v = $('#enroll-video');
+    canvas.width = 160; canvas.height = 160 * (v.videoHeight/v.videoWidth || 1);
+    canvas.getContext('2d').drawImage(v, 0, 0, canvas.width, canvas.height);
+    const photo = canvas.toDataURL('image/jpeg', 0.7);
+
+    await db.ref('employees').push({
+      name,
+      photo,
+      descriptor: Array.from(detection.descriptor)
+    });
+
+    resultEl.className = 'result-msg show ok';
+    resultEl.textContent = `${name} enrolled successfully.`;
+    $('#emp-name-input').value = '';
+
+    if(enrollStream){ enrollStream.getTracks().forEach(t=>t.stop()); enrollStream = null; }
+    $('#enroll-video').srcObject = null;
+    $('#enroll-placeholder').style.display = 'flex';
+    $('#enroll-placeholder').textContent = 'Tap "Start camera" to enroll a face';
+    $('#enroll-capture-btn').disabled = true;
+    $('#enroll-cam-btn').textContent = 'Start camera';
+  });
+
+  function renderEmployees(){
+    const wrap = $('#employee-list');
+    if(employees.length === 0){
+      wrap.innerHTML = '<p class="empty">No employees added yet.</p>';
+      return;
+    }
+    wrap.innerHTML = '';
+    employees.forEach(emp=>{
+      const row = document.createElement('div');
+      row.className = 'emp-row';
+      const info = document.createElement('div');
+      info.className = 'emp-info';
+      const img = document.createElement('img');
+      img.src = emp.photo;
+      const name = document.createElement('span');
+      name.textContent = emp.name;
+      info.appendChild(img); info.appendChild(name);
+      const btn = document.createElement('button');
+      btn.className = 'danger';
+      btn.textContent = 'Remove';
+      btn.addEventListener('click', ()=> db.ref('employees/'+emp.id).remove());
+      row.appendChild(info); row.appendChild(btn);
+      wrap.appendChild(row);
+    });
+  }
+
+  function renderLog(){
+    const wrap = $('#log-table-wrap');
+    if(attendanceLog.length === 0){
+      wrap.innerHTML = '<p class="empty">No attendance recorded yet.</p>';
+      return;
+    }
+    const rows = [...attendanceLog].reverse().slice(0, 100).map(l=>`
+      <tr>
+        <td>${escapeHtml(l.employeeName)}</td>
+        <td class="${l.type==='IN'?'tag-in':'tag-out'}">${l.type}</td>
+        <td>${formatTime(l.ts)}</td>
+        <td>${l.distance}m</td>
+      </tr>
+    `).join('');
+    wrap.innerHTML = `<table class="log"><thead><tr><th>Employee</th><th>Type</th><th>Time</th><th>Dist.</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+
+  function escapeHtml(s){
+    const d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+  }
+
+  function csvEscape(val){
+    const s = String(val ?? '');
+    if(/[",\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+    return s;
+  }
+
+  function downloadCsv(filename, rows){
+    const csv = rows.map(r => r.map(csvEscape).join(',')).join('\r\n');
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  $('#export-btn').addEventListener('click', ()=>{
+    if(attendanceLog.length === 0){
+      alert('No attendance records yet.');
+      return;
+    }
+    const sorted = [...attendanceLog].sort((a,b)=> a.ts - b.ts);
+    const rows = [['Employee', 'Type', 'Date', 'Time', 'Distance (m)', 'Latitude', 'Longitude']];
+    sorted.forEach(l=>{
+      const d = new Date(l.ts);
+      rows.push([
+        l.employeeName,
+        l.type,
+        d.toLocaleDateString('en-IN'),
+        d.toLocaleTimeString('en-IN'),
+        l.distance,
+        l.lat ? l.lat.toFixed(6) : '',
+        l.lng ? l.lng.toFixed(6) : ''
+      ]);
+    });
+    const today = new Date().toISOString().slice(0,10);
+    downloadCsv(`attendance-log-${today}.csv`, rows);
+  });
+
+  // ---------- Firebase realtime listeners ----------
+  function attachListeners(){
+    db.ref('officeConfig').on('value', snap=>{
+      officeConfig = snap.val();
+      renderOfficeConfig();
+      evaluateDistance();
+    });
+    db.ref('employees').on('value', snap=>{
+      const val = snap.val() || {};
+      employees = Object.keys(val).map(id => Object.assign({ id }, val[id]));
+      renderEmployees();
+    });
+    db.ref('attendanceLog').on('value', snap=>{
+      const val = snap.val() || {};
+      attendanceLog = Object.keys(val).map(id => Object.assign({ id }, val[id]));
+      renderLog();
+    });
+  }
+
+  // ---------- init ----------
+  async function loadModels(){
+    await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
+    await faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL);
+    await faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL);
+  }
+
+  async function init(){
+    try{
+      await loadModels();
+    }catch(e){
+      $('#loading-text').textContent = 'Model load failed — ' + (e.message || e) + '. Check your internet connection and reload.';
+      return;
+    }
+    attachListeners();
+    $('#loading').style.display = 'none';
+    $('#app').style.display = 'block';
+    startGeoWatch();
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>
