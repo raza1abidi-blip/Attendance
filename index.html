@@ -211,6 +211,13 @@
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => document.querySelectorAll(sel);
 
+  function withTimeout(promise, ms){
+    return Promise.race([
+      promise,
+      new Promise((_, reject) => setTimeout(()=> reject(new Error('TIMEOUT')), ms))
+    ]);
+  }
+
   // ---------- Firebase check + init ----------
   if(!firebaseConfig.apiKey || firebaseConfig.apiKey === 'YOUR_API_KEY'){
     document.getElementById('loading').style.display = 'none';
@@ -276,7 +283,9 @@
       evaluateDistance();
     }, err=>{
       $('#geo-status').className = 'status-pill bad';
-      $('#geo-status').innerHTML = '<span class="dot"></span>location blocked';
+      $('#geo-status').innerHTML = err.code === 1
+        ? '<span class="dot"></span>location blocked'
+        : '<span class="dot"></span>no GPS signal — try near a window';
       $('#distance-val').textContent = '—';
     }, { enableHighAccuracy:true, maximumAge:5000, timeout:15000 });
   }
@@ -327,11 +336,23 @@
   $('#capture-btn').addEventListener('click', async ()=>{
     const resultEl = $('#result-msg');
     resultEl.className = 'result-msg show';
-    resultEl.textContent = 'Verifying face…';
+    resultEl.textContent = 'Verifying face… (can take up to 20s on some phones)';
     $('#capture-btn').disabled = true;
 
-    const detection = await faceapi.detectSingleFace($('#video'), new faceapi.TinyFaceDetectorOptions())
-      .withFaceLandmarks().withFaceDescriptor();
+    let detection;
+    try{
+      detection = await withTimeout(
+        faceapi.detectSingleFace($('#video'), new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks().withFaceDescriptor(),
+        20000
+      );
+    }catch(e){
+      resultEl.className = 'result-msg show bad';
+      resultEl.textContent = e.message === 'TIMEOUT'
+        ? 'Taking too long on this device. Hold the phone steady with your full face in frame and try again.'
+        : 'Something went wrong: ' + (e.message || e);
+      $('#capture-btn').disabled = false;
+      return;
+    }
 
     if(!detection){
       resultEl.className = 'result-msg show bad';
@@ -387,9 +408,11 @@
       const cfg = { lat: pos.coords.latitude, lng: pos.coords.longitude, radius };
       await db.ref('officeConfig').set(cfg);
       $('#set-office-btn').textContent = 'Set office to my current location';
-    }, ()=>{
-      $('#set-office-btn').textContent = 'Location permission denied — retry';
-    }, { enableHighAccuracy:true });
+    }, (err)=>{
+      $('#set-office-btn').textContent = err.code === 1
+        ? 'Location permission denied — retry'
+        : 'Could not get location — move near a window and retry';
+    }, { enableHighAccuracy:true, timeout:20000, maximumAge:0 });
   });
 
   $('#radius-input').addEventListener('change', async ()=>{
@@ -431,10 +454,21 @@
       return;
     }
     resultEl.className = 'result-msg show';
-    resultEl.textContent = 'Reading face…';
+    resultEl.textContent = 'Reading face… (can take up to 20s on some phones)';
 
-    const detection = await faceapi.detectSingleFace($('#enroll-video'), new faceapi.TinyFaceDetectorOptions())
-      .withFaceLandmarks().withFaceDescriptor();
+    let detection;
+    try{
+      detection = await withTimeout(
+        faceapi.detectSingleFace($('#enroll-video'), new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks().withFaceDescriptor(),
+        20000
+      );
+    }catch(e){
+      resultEl.className = 'result-msg show bad';
+      resultEl.textContent = e.message === 'TIMEOUT'
+        ? 'Taking too long on this device. Hold the phone steady with the full face in frame and try again.'
+        : 'Something went wrong: ' + (e.message || e);
+      return;
+    }
 
     if(!detection){
       resultEl.className = 'result-msg show bad';
